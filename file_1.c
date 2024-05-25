@@ -1,24 +1,29 @@
+// Standard input-output functions (stdio.h), standard library functions (stdlib.h), integer type definitions 
+// (stdint.h), and string manipulation routines (string.h) are all included in these header files.
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-
+// Specifies the size of the buffer that will be used to store data chunks by defining the constant 
+// BUFFER_SIZE with a value of 64.
 #define BUFFER_SIZE 64
 
+// Defines a structure TxInput to represent a Bitcoin transaction input. It contains:
 typedef struct {
-    uint8_t prev_tx_hash[32];
-    uint32_t prev_tx_index;
-    uint64_t script_length;
+    uint8_t prev_tx_hash[32]; //The hash of the previous transaction
+    uint32_t prev_tx_index; //The index of the previous transaction's output.
+    uint64_t script_length; 
     uint8_t *script;
     uint32_t sequence;
-    char address[35];
+    char address[35]; //A string to store a human-readable address.
 } TxInput;
 
+//Defines a structure TxOutput to represent a Bitcoin transaction output. It contains:
 typedef struct {
-    uint64_t value;
-    uint64_t script_length;
+    uint64_t value; //The value of the output in satoshis.
+    uint64_t script_length; 
     uint8_t *script;
-    char address[35];
+    char address[35]; //A string to store a human-readable address.
 } TxOutput;
 
 typedef struct {
@@ -31,16 +36,18 @@ typedef struct {
 } BitcoinTransaction;
 
 typedef struct {
-    uint8_t buffer[BUFFER_SIZE];
-    size_t buffer_length;
-    size_t total_length;
-    BitcoinTransaction transaction;
-    size_t offset;
-    int state;
-    int input_index;
-    int output_index;
+    uint8_t buffer[BUFFER_SIZE]; //A buffer to store incoming data chunks.
+    size_t buffer_length; //The current length of data in the buffer.
+    size_t total_length; //The total length of data processed.
+    BitcoinTransaction transaction; //structure to store the parsed transaction.
+    size_t offset; //The current offset within the buffer.
+    int state; //The current state of the deserialization process.
+    int input_index; //The current index of the input being processed.
+    int output_index; //The current index of the output being processed.
 } Deserializer;
 
+// Assigns the initial values to each field of a Deserializer structure to make it initial. 
+// The transaction structure is zeroed out using memset.
 void init_deserializer(Deserializer *deserializer) {
     deserializer->buffer_length = 0;
     deserializer->total_length = 0;
@@ -51,6 +58,9 @@ void init_deserializer(Deserializer *deserializer) {
     memset(&deserializer->transaction, 0, sizeof(BitcoinTransaction));
 }
 
+// Starts at the specified offset and reads a variable-length integer (varint) from the data buffer. 
+// Depending on its first byte, the variate can have a length of 1, 3, 5, or 9 bytes. The function 
+// modifies the offset and returns an integer value.
 uint64_t read_varint(const uint8_t *data, size_t *offset) {
     uint8_t first = data[*offset];
     (*offset)++;
@@ -79,6 +89,8 @@ uint64_t read_varint(const uint8_t *data, size_t *offset) {
     }
 }
 
+// Parses the script input and puts it in the address field after converting it to a human-readable manner. 
+// The script is merely formatted as a hexadecimal string using this function.
 void parse_input_script(const uint8_t *script, uint64_t script_length, char *address) {
     snprintf(address, 35, "script: ");
     for (uint64_t i = 0; i < script_length && (2 * i + 8) < 34; ++i) {
@@ -86,6 +98,8 @@ void parse_input_script(const uint8_t *script, uint64_t script_length, char *add
     }
 }
 
+// The output script is parsed in the same manner as the input script, transformed into a readable format, 
+// and then saved in the address field.
 void parse_output_script(const uint8_t *script, uint64_t script_length, char *address) {
     snprintf(address, 35, "script: ");
     for (uint64_t i = 0; i < script_length && (2 * i + 8) < 34; ++i) {
@@ -93,16 +107,21 @@ void parse_output_script(const uint8_t *script, uint64_t script_length, char *ad
     }
 }
 
+// Modifies the buffer's length and total length and adds a new piece of data.
 int add_chunk(Deserializer *deserializer, const uint8_t *chunk, size_t chunk_length) {
     memcpy(deserializer->buffer + deserializer->buffer_length, chunk, chunk_length);
     deserializer->buffer_length += chunk_length;
     deserializer->total_length += chunk_length;
 
+    // Sets the pointer to the transaction that is being deserialised and the current offset's 
+    // local variables to their initial values.
     size_t offset = deserializer->offset;
     BitcoinTransaction *tx = &deserializer->transaction;
 
     while (offset < deserializer->buffer_length) {
         switch (deserializer->state) {
+// State 0: If the buffer contains at least 4 bytes, read the transaction version. 
+// advances the offset before going on to the following state.
             case 0: // Version
                 if (deserializer->buffer_length >= 4) {
                     tx->version = *((uint32_t *)(deserializer->buffer + offset));
@@ -112,6 +131,8 @@ int add_chunk(Deserializer *deserializer, const uint8_t *chunk, size_t chunk_len
                     return 0;
                 }
                 break;
+// State1: Uses read_varint to read the input count, allocates memory for the inputs, and then advances
+ // to the next step.
             case 1: // Input count
                 if (offset < deserializer->buffer_length) {
                     tx->input_count = read_varint(deserializer->buffer, &offset);
@@ -121,6 +142,8 @@ int add_chunk(Deserializer *deserializer, const uint8_t *chunk, size_t chunk_len
                     return 0;
                 }
                 break;
+// Stage 2: Examines every input field for every input, including the script length, sequence, index, prior 
+// transaction hash, and script. Changes the state and input index and allocates RAM as needed.
             case 2: // Inputs
                 while (deserializer->input_index < tx->input_count) {
                     TxInput *input = &tx->inputs[deserializer->input_index];
@@ -155,6 +178,7 @@ int add_chunk(Deserializer *deserializer, const uint8_t *chunk, size_t chunk_len
                 }
                 deserializer->state++;
                 break;
+// State 3: Uses read_varint to read the output count, allocates memory for the outputs, and advances to the following state.
             case 3: // Output count
                 if (offset < deserializer->buffer_length) {
                     tx->output_count = read_varint(deserializer->buffer, &offset);
@@ -164,6 +188,8 @@ int add_chunk(Deserializer *deserializer, const uint8_t *chunk, size_t chunk_len
                     return 0;
                 }
                 break;
+// State 4: Reads the value, script length, and script for each output field across all outputs. Memory is 
+// allocated as needed, and the output index and state are updated.
             case 4: // Outputs
                 while (deserializer->output_index < tx->output_count) {
                     TxOutput *output = &tx->outputs[deserializer->output_index];
@@ -186,6 +212,8 @@ int add_chunk(Deserializer *deserializer, const uint8_t *chunk, size_t chunk_len
                 }
                 deserializer->state++;
                 break;
+// State 5: If the buffer contains at least 4 bytes, reads the locktime. completes the deserialisation operation, 
+// updates the offset, and returns 1 to signify success.
             case 5: // Locktime
                 if (offset + 4 <= deserializer->buffer_length) {
                     tx->locktime = *((uint32_t *)(deserializer->buffer + offset));
@@ -199,11 +227,11 @@ int add_chunk(Deserializer *deserializer, const uint8_t *chunk, size_t chunk_len
                 break;
         }
     }
-
+// returns 0 if the deserialization is not complete and updates the offset of the deserializer.
     deserializer->offset = offset;
     return 0;
 }
-
+//Releases the memory used for the inputs and outputs of the transaction.
 void free_transaction(BitcoinTransaction *tx) {
     for (size_t i = 0; i < tx->input_count; i++) {
         free(tx->inputs[i].script);
@@ -214,7 +242,8 @@ void free_transaction(BitcoinTransaction *tx) {
     }
     free(tx->outputs);
 }
-
+//Shows the transaction's specifics, such as the version, the number of inputs and outputs, and 
+// comprehensive details on each input and output.
 void display_transaction(const BitcoinTransaction *tx) {
     printf("Version: %u\n", tx->version);
     printf("Input Count: %llu\n", tx->input_count);
@@ -271,14 +300,14 @@ int main() {
     };
 
     size_t num_chunks = sizeof(chunks) / BUFFER_SIZE;
-
+//When the transaction has been fully deserialised, adds each chunk to the deserializer and shows it.
     for (size_t i = 0; i < num_chunks; i++) {
         if (add_chunk(&deserializer, chunks[i], BUFFER_SIZE)) {
             display_transaction(&deserializer.transaction);
             break;
         }
     }
-
+//Returns 0 to signify successful execution and releases the memory allotted for the transaction.
     free_transaction(&deserializer.transaction);
     return 0;
 }
